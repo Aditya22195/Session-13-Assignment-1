@@ -158,3 +158,5 @@ model <- glm.nb(count ~past.crime.1 + past.crime.7 + past.crime.30 +
 summary(model)
 
 # All the varibales considered in the model have significant relation with the crime.
+
+write.csv(model.data, "C:/Users/Aditya/Desktop/crimemodel.csv")
