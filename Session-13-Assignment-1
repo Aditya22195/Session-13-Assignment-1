@@ -1,0 +1,160 @@
+# 1. Use the given link Data Set
+# Answer the below questions:
+Crimes_-_2001_to_present <- read.csv("C:/Users/Aditya/Desktop/Crimes_-_2001_to_present.txt")
+View(Crimes_-_2001_to_present)
+crime <- Crimes_-_2001_to_present
+
+names(crimes) <- c("Case", "Number", "Date", "Block", "IUCR", "Primary Type", "Description",
+                   "Location Desc", "Arrest", "Domestic", "Beat", "District", "Ward", "Community Area",
+                   "FBI Code", "X Coordinate", "Y Coordinate", "Year", "Updated On", 
+                   "Latitude", "Longitude", "Location")
+head(crimes)
+str(crimes)
+
+#a. Find out top 5 attributes having highest correlation (select only Numeric features).
+
+crimes <- na.omit(crimes)
+names(crimes)
+c <- cor(crimes[c(11,12,13,14,18,20,21)])
+c
+library(reshape2)
+m <- melt(c)
+library(dplyr)
+m
+top <- m%>%select(X1, X2, value)%>%filter(value != 1)
+top[order(top$value, decreasing = T)[1:10],]
+
+# District~Beat, Ward~District, Ward~Beat, Latitude~Ward, Latitude~District are top5 attributes with highest correclation
+
+# b. Find out top 3 reasons for having more crime in a city.
+x <- as.data.frame(table(crimes$Description))
+x[order(x$Freq, decreasing = T)[1:3],]
+
+# Simple, $500 and Under and  Domestic Battery Simple are the top 3 reasons for having more crime
+
+# c. Which all attributes have correlation with crime rate?
+table(is.na(crimes))
+
+crimes$Date <- as.POSIXlt(crimes$Date, format= "%m/%d/%Y %H:%M:%S")
+crimes$`Updated On` <- as.POSIXlt(crimes$`Updated On`, format= "%m/%d/%Y %H:%M:%S")
+
+library(chron)
+crimes$Time <- times(format(crimes$Date,"%H:%M:%S"))
+crimes$Date <- as.POSIXct(crimes$Date)
+crimes$`Updated On` <- as.POSIXct(crimes$`Updated On`)
+
+crime_time <- chron(times=c("00:00:00", "06:00:00", "12:00:00", "18:00:00","23:59:00"))
+crime_time
+crimes$crime_time <- cut(crimes$crime_time, breaks= crime_time,
+                      labels= c("00-06","06-12", "12-18", "18-00"), include.lowest =TRUE)
+table(crimes$crime_time)
+
+# date variable to contain just the date part
+crimes$date <- as.POSIXlt(strptime(crimes$Date, format = "%Y-%m-%d"))
+crimes$date <- as.POSIXct(crimes$date)
+
+# days and months could be predicatble variable
+crimes$day <- as.factor(weekdays(crimes$Date, abbreviate = TRUE))
+crimes$month <- as.factor(months(crimes$Date, abbreviate = TRUE))
+str(crimes$day)
+str(crimes$month)
+
+# converting Arrest yes / no to binary varibale
+crimes$Arrest <- ifelse(as.character(crimes$Arrest) == "true",1,0)
+
+# The data contain about 31 crime types, not all of which are mutually exclusive. We can combine
+# two or more similar categories into one to reduce this number and make the analysis a bit easier.7
+crimes$crime <- as.character(crimes$`Primary Type`)
+crimes$crime <- ifelse(crimes$crime %in% c("CRIM SEXUAL ASSAULT","PROSTITUTION", "SEX OFFENSE","HUMAN TRAFFICKING"), 'SEX', crime$crime)
+crimes$crime <- ifelse(crimes$crime %in% c("MOTOR VEHICLE THEFT"), "MVT", crime$crime)
+crimes$crime <- ifelse(crimes$crime %in% c("GAMBLING", "INTERFEREWITH PUBLIC OFFICER", "INTERFERENCE WITH PUBLIC OFFICER", "INTIMIDATION",
+                                         "LIQUOR LAW VIOLATION", "OBSCENITY", "NON-CRIMINAL", "PUBLIC PEACE VIOLATION",
+                                         "PUBLIC INDECENCY", "STALKING", "NON-CRIMINAL (SUBJECT SPECIFIED)","NON - CRIMINAL"),
+                      "NONVIO", crime$crime)
+crimes$crime <- ifelse(crimes$crime == "CRIMINAL DAMAGE", "DAMAGE",crime$crime)
+crimes$crime <- ifelse(crimes$crime == "CRIMINAL TRESPASS","TRESPASS", crime$crime)
+crimes$crime <- ifelse(crimes$crime %in% c("NARCOTICS", "OTHER NARCOTIC VIOLATION", "OTHER NARCOTIC VIOLATION"), "DRUG", crime$crime)
+crimes$crime <- ifelse(crimes$crime == "DECEPTIVE PRACTICE","FRAUD", crime$crime)
+crimes$crime <- ifelse(crimes$crime %in% c("OTHER OFFENSE", "OTHEROFFENSE"), "OTHER", crime$crime)
+crimes$crime <- ifelse(crimes$crime %in% c("KIDNAPPING", "WEAPONS VIOLATION", "CONCEALED CARRY LICENSE VIOLATION","OFFENSE INVOLVING CHILDREN"), "VIO", crime$crime)
+table(crimes$crime)
+
+
+# A potential important indicator of criminal activity in a particular area could be the history of
+# criminal activities in the past.
+
+temp <- aggregate(crimes$crime, by=list(crimes$crime, crimes$chrime_time), FUN=length)
+names(temp) <- c("crime", "chrime_time", "count")
+library(plyr)
+temp <- ddply(crime, .(crime, day), summarise, count = length(date))
+
+library(doBy)
+temp <- summaryBy(Case ~ crime + month, data = crimes, FUN= length)
+names(temp)[3] <- 'count'
+
+crime.agg <- ddply(crime, .(crime, Arrest, Beat, date, `X Coordinate`, `Y Coordinate`, chrime_time, day, month),
+                   summarise, count=length(date), .progress='text')
+
+beats <- sort(unique(crime.agg$Beat))
+dates <- sort(as.character(unique(crime.agg$date)))
+temp <- expand.grid(beats, dates)
+names(temp) <- c("Beat", "date")
+
+model.data <- aggregate(crime.agg[, c('count', 'Arrest')], by=
+                          list(crime.agg$Beat, as.character(crime.agg$date)), FUN=sum)
+names(model.data) <- c("Beat", "date", "count", "Arrest")
+model.data <- merge(temp, model.data, by= c('Beat', 'date'), all.x= TRUE)
+View(model.data)
+model.data$count[is.na(model.data$count)] <- 0
+model.data$Arrest[is.na(model.data$Arrest)] <- 0
+model.data$day <- weekdays(as.Date(model.data$date), abbreviate= TRUE)
+model.data$month <- months(as.Date(model.data$date), abbreviate= TRUE)
+pastDays <- function(x) {c(0, rep(1, x))}
+model.data$past.crime.1 <- ave(model.data$count, model.data$Beat,
+                               FUN=function(x) filter(x, pastDays(1), sides= 1))
+model.data$past.crime.7 <- ave(model.data$count, model.data$Beat,
+                               FUN=function(x) filter(x, pastDays(7), sides= 1))
+model.data$past.crime.30 <- ave(model.data$count, model.data$Beat,
+                                FUN=function(x) filter(x, pastDays(30), sides= 1))
+
+meanNA <- function(x){mean(x, na.rm= TRUE)}
+model.data$past.crime.1 <- ifelse(is.na(model.data$past.crime.1),
+                                  meanNA(model.data$past.crime.1), model.data$past.crime.1)
+model.data$past.crime.7 <- ifelse(is.na(model.data$past.crime.7),
+                                  meanNA(model.data$past.crime.7), model.data$past.crime.7)
+model.data$past.crime.30 <- ifelse(is.na(model.data$past.crime.30),
+                                   meanNA(model.data$past.crime.30), model.data$past.crime.30)
+# past variables for arrests
+model.data$past.arrest.30 <- ave(model.data$Arrest, model.data$Beat,
+                                 FUN= function(x) filter(x, pastDays(30), sides= 1))
+model.data$past.arrest.30 <- ifelse(is.na(model.data$past.arrest.30),
+                                    meanNA(model.data$past.arrest.30), model.data$past.arrest.30)
+# arrests per crime
+model.data$policing <- ifelse(model.data$past.crime.30 == 0, 0,
+                              model.data$past.arrest.30/model.data$past.crime.30)
+
+# trend
+model.data$crime.trend <- ifelse(model.data$past.crime.30 == 0, 0,
+                                 model.data$past.crime.7/model.data$past.crime.30)
+
+# season could be another reason
+model.data$season <- as.factor(ifelse(model.data$month %in% c("Mar", "Apr", "May"), "spring",
+                                      ifelse(model.data$month %in% c("Jun", "Jul", "Aug"), "summer",
+                                             ifelse(model.data$month %in% c("Sep", "Oct","Nov"), "fall", "winter"))))
+
+model.cor <- cor(model.data[, c("count", "past.crime.1", "past.crime.7",
+                                "past.crime.30","policing", "crime.trend")])
+model.cor
+psych::cor.plot(model.cor)
+
+mean(model.data$count)
+var(model.data$count)
+# The variance is much greater than the mean indicating that the distribution is overdispersed. 
+# Asuitable way to model for such overdispersion is using the negative binomial distribution
+
+library(MASS)
+model <- glm.nb(count ~past.crime.1 + past.crime.7 + past.crime.30 +
+                  + policing + crime.trend + factor(day) + season, data= model.data)
+summary(model)
+
+# All the varibales considered in the model have significant relation with the crime.
